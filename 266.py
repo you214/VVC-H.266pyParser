@@ -77,7 +77,6 @@ class NalUnitType:
    NAL_UNIT_UNSPEC_29 = 29
    NAL_UNIT_UNSPEC_30 = 30
    NAL_UNIT_UNSPEC_31 = 31   
-   
 
 class nal_unit_header(object):
    def __init__(self, s):
@@ -88,14 +87,77 @@ class nal_unit_header(object):
       self.nuh_temporal_id_plus1 = s.read('uint:3')
 
    def show(self):
-      print('forbidden_zero_bit', self.forbidden_zero_bit)
-      print('nuh_reserved_zero_bit', self.nuh_reserved_zero_bit)
-      print('nuh_layer_id', self.nuh_layer_id)
-      print('nal_unit_type', self.nal_unit_type)
-      print('nuh_temporal_id_plus1', self.nuh_temporal_id_plus1)
+      print('  forbidden_zero_bit', self.forbidden_zero_bit)
+      print('  nuh_reserved_zero_bit', self.nuh_reserved_zero_bit)
+      print('  nuh_layer_id', self.nuh_layer_id)
+      print('  nal_unit_type', self.nal_unit_type)
+      print('  nuh_temporal_id_plus1', self.nuh_temporal_id_plus1)
 
-
-
+class video_parameter_set_rbsp(object):
+   def __init__(self, s):
+      """
+      7.3.2.3 Video parameter set RBSP syntax
+      """
+      self.t = '\t'
+      self.vps_video_parameter_set_id = s.read('uint:4')
+      self.vps_max_layers_minus1 = s.read('uint:6')
+      self.vps_max_sublayers_minus1 = s.read('uint:3')
+      if self.vps_max_layers_minus1 > 0 & self.vps_max_sublayers_minus1 > 0:
+         self.vps_default_ptl_dpb_hrd_max_tid_flag = s.read('uint:1')
+      if self.vps_max_layers_minus1 > 0:
+         self.vps_all_independent_layers_flag = s.read('uint:1')
+      for i in range(self.vps_max_layers_minus1):
+         self.vps_layer_id[i] = s.read('uint:6')
+         if i > 0 & self.vps_all_independent_layers_flag == 0:
+            self.vps_max_tid_ref_present_flag[i] = s.read('uint:1')
+            for j in range(i):
+               self.vps_direct_ref_layer_flag[i][j] = s.read('uint:1')
+               if self.vps_max_tid_ref_present_flag[i] & self.vps_direct_ref_layer_flag[i][j]:
+                  self.vps_max_tid_il_ref_pics_plus1[i][j] = s.read('uint:3')
+      if self.vps_max_layers_minus1 > 0:
+         if self.vps_all_independent_layers_flag:
+            self.vps_each_layer_is_an_ols_flag = s.read('uint:1')
+         if self.vps_each_layer_is_an_ols_flag == 0:
+            if self.vps_all_independent_layers_flag == 0:
+               self.vps_ols_mode_idc = s.read('uint:2')
+            if self.vps_ols_mode_idc == 2 :
+               self.vps_num_output_layer_sets_minus2 = s.read('uint:8')
+               i = 1
+               for i in range(self.vps_num_output_layer_sets_minus2 + 1):
+                  for j in range(self.vps_max_layers_minus1):
+                     self.vps_ols_output_layer_flag[ i ][ j ] = s.read('uint:1')
+               self.vps_num_ptls_minus1 = s.read('uint:8')
+            i = 0
+            for i in range(self.vps_num_ptls_minus1):
+               if i > 0:
+                  self.vps_pt_present_flag[i] = s.read('uint:1')
+               if( vps_default_ptl_dpb_hrd_max_tid_flag  == 0):
+                  self.vps_ptl_max_tid[ i ] = s.read('uint:3')
+            while not byte_alined():
+               self.vps_ptl_alignment_zero_bit = s.read('uint:1') #equal to 0 */
+            for i in range(self.vps_num_ptls_minus1):
+               self.profile_tier_level( vps_pt_present_flag[ i ], vps_ptl_max_tid[ i ] )
+            for i in range(self.TotalNumOlss):
+               if self.vps_num_ptls_minus1 > 0 & self.vps_num_ptls_minus1 + 1 != self.TotalNumOlss:
+                  self.vps_ols_ptl_idx[ i ] = s.read('uint:8')
+            if not self.vps_each_layer_is_an_ols_flag:
+               self.vps_num_dpb_params_minus1 = s.read('ue')
+               if self.vps_max_sublayers_minus1 > 0:
+                  self.vps_sublayer_dpb_params_present_flag = s.read('uint:1')
+               for i in range (self.VpsNumDpbParams) :
+                  if not self.vps_default_ptl_dpb_hrd_max_tid_flag:
+                     self.vps_dpb_max_tid[i] = s.read('uint:3')
+                  self.dpb_parameters( vps_dpb_max_tid[ i ], vps_sublayer_dpb_params_present_flag )
+               for i in range(self.NumMultiLayerOlss):
+                  self.vps_ols_dpb_pic_width[ i ] = s.read('ue')
+                  self.vps_ols_dpb_pic_height[ i ] = s.read('ue')
+                  self.vps_ols_dpb_chroma_format[ i ] = s.read('uint:2')
+                  self.vps_ols_dpb_bitdepth_minus8[ i ] = s.read('ue')
+                  if self.VpsNumDpbParams > 1 & self.VpsNumDpbParams == 1 != self.NumMultiLayerOlss:
+                     self.vps_ols_dpb_params_idx[ i ] = s.read('ue')
+                     
+                  
+                  
 def read_nal_unit(s, i, NumBytesInNalUnit):
 
    # Advance pointer and skip 24 bits, i.e. 0x000001
@@ -116,10 +178,83 @@ def read_nal_unit(s, i, NumBytesInNalUnit):
       else:
          rbsp_byte.append(s.read('bits:8'))
 
+   NumBytesInRbsp = len(rbsp_byte)
+   s = rbsp_byte
+
+   nal_unit_type = n.nal_unit_type
+
+   if nal_unit_type == NalUnitType.NAL_UNIT_TRAIL_NUT or \
+      nal_unit_type == NalUnitType.NAL_UNIT_STSA_NUT:
+         #slice_layer_rbsp()
+         pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_RADL_NUT or \
+      nal_unit_type == NalUnitType.NAL_UNIT_RASL_NUT:
+         # slice_layer_rbsp()
+         pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_VCL_4 or \
+      nal_unit_type == NalUnitType.NAL_UNIT_VCL_5 or \
+      nal_unit_type == NalUnitType.NAL_UNIT_VCL_6 :
+         pass
+   elif  nal_unit_type == NalUnitType.NAL_UNIT_IDR_W_RADL or \
+      nal_unit_type == NalUnitType.NAL_UNIT_N_LP:
+         #slice_layer_rbsp()
+         pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_CRA_NUT or \
+      nal_unit_type == NalUnitType.NAL_UNIT_GDR_NUT:
+         #slice_layer_rbsp()
+         pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_RSV_IRAP_11:
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_OPI_NUT:
+      #operating_point_information_rbsp()
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_DCI_NUT:
+      #decoding_capability_information_rbsp()
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_VPS_NUT:
+      # video_parameter_set_rbsp()
+      video_parameter_set_rbsp(s).show()
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_SPS_NUT:
+      # seq_parameter_set_rbsp()
+      seq_parameter_set_rbsp(s).show()
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_PPS_NUT:
+      # pic_parameter_set_rbsp()
+      pic_parameter_set_rbsp(s).show()      
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_PREFIX_APS_NUT or \
+      nal_unit_type == NalUnitType.NAL_UNIT_SUFFIX_APS_NUT:
+         pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_PH_NUT:
+      # picture_header_rbsp()
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_AUD_NUT:
+      # access_unit_delimiter_rbsp()
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_EOS_NUT:
+      # end_of_seq_rbsp()
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_EOB_NUT:
+      # end_of_bitstream_rbsp()
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_PREFIX_SEI_NUT or \
+   nal_unit_type == NalUnitType.NAL_UNIT_SUFFIX_SEI_NUT:
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_FD_NUT:
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_RSV_NVCL_26 or \
+      nal_unit_type == NalUnitType.NAL_UNIT_NVCL_27:
+      pass
+   elif nal_unit_type == NalUnitType.NAL_UNIT_UNSPEC_28 or \
+      nal_unit_type == NalUnitType.NAL_UNIT_UNSPEC_29 or \
+      nal_unit_type == NalUnitType.NAL_UNIT_UNSPEC_30 or \
+      nal_unit_type == NalUnitType.NAL_UNIT_UNSPEC_31:
+      pass
+
 def main():
    
    F = 'out.vvc'
-   #F = 'baskeQP1_GOF0_texture.bin'
    s = BitStream(filename=F)
    
    nals = list(s.findall('0x000001', bytealigned=True))
